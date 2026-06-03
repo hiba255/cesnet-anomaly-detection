@@ -1,0 +1,9 @@
+.vagrant/
+*.pcap
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+models/*.pkl
+models/*.pth
+data/*.csv
+data/*.pkl
