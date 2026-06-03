@@ -7,3 +7,8 @@ models/*.pkl
 models/*.pth
 data/*.csv
 data/*.pkl
+data/*.tar.gz
+data/*.gz
+data/ip_addresses_sample/
+data/times/
+data/cesnet_sample.csv
