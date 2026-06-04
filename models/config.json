@@ -1,0 +1,27 @@
+{
+  "threshold": 0.12095659971237183,
+  "input_dim": 12,
+  "features": [
+    "n_flows",
+    "n_packets",
+    "n_bytes",
+    "n_dest_asn",
+    "n_dest_ports",
+    "n_dest_ip",
+    "tcp_udp_ratio_packets",
+    "tcp_udp_ratio_bytes",
+    "dir_ratio_packets",
+    "dir_ratio_bytes",
+    "avg_duration",
+    "avg_ttl"
+  ],
+  "skewed_features": [
+    "n_flows",
+    "n_packets",
+    "n_bytes",
+    "n_dest_asn",
+    "n_dest_ports",
+    "n_dest_ip",
+    "avg_duration"
+  ]
+}
