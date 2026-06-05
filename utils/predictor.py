@@ -52,7 +52,6 @@ def predict(df: pd.DataFrame):
     
     # Prétraitement
     df_proc = df[features].copy().astype(float)
-    df_proc.columns = range(len(features))
     for col in skewed:
         if col in df_proc.columns:
             df_proc[col] = np.log1p(df_proc[col])
