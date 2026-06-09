@@ -306,6 +306,6 @@ Dataset: CESNET-TimeSeries24 | Model: Autoencoder PyTorch
 
 ---
 
-## 📄 License
+##  License
 
 This project was developed as part of an internship. Dataset usage follows [CESNET-TimeSeries24 license terms](https://zenodo.org/records/13382427).
