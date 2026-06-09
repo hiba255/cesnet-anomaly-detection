@@ -4,25 +4,29 @@ import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import json
-from io import StringIO
+import time
+import websocket
+import threading
+from collections import deque
+import datetime
 
-# Configuration de la page
+# Configuration
 st.set_page_config(
-    page_title="Détection d'Anomalies Réseau",
+    page_title="Détection d'Anomalies Réseau — Temps Réel",
     page_icon="🛡️",
     layout="wide"
 )
 
-# Titre principal
-st.title("🛡️ Système de Détection d'Anomalies Réseau")
-st.markdown("**Dataset CESNET-TimeSeries24 | Autoencoder PyTorch | Non Supervisé**")
+st.title("🛡️ Détection d'Anomalies Réseau — Temps Réel")
+st.markdown("**CESNET-TimeSeries24 | Autoencoder PyTorch | Live Dashboard**")
 st.divider()
 
 # Sidebar
 st.sidebar.title("⚙️ Configuration")
-api_url = st.sidebar.text_input("URL de l'API", value="http://localhost:8000")
+api_url = st.sidebar.text_input("URL API", value="http://localhost:8000")
+ws_url = st.sidebar.text_input("URL WebSocket", value="ws://localhost:8000/ws/realtime")
 
-# Vérifier l'état de l'API
+# Vérifier API
 try:
     response = requests.get(f"{api_url}/health", timeout=3)
     if response.status_code == 200:
@@ -35,120 +39,150 @@ except:
     st.sidebar.error("❌ API non disponible")
 
 st.sidebar.divider()
+st.sidebar.title("📁 Test Manuel")
+uploaded_file = st.sidebar.file_uploader("Upload CSV", type=['csv'])
 
-# Upload fichier
-st.sidebar.title("📁 Upload CSV")
-uploaded_file = st.sidebar.file_uploader(
-    "Glisse ton fichier CSV ici",
-    type=['csv'],
-    help="Format CESNET : 12 features réseau"
-)
+# Métriques temps réel
+col1, col2, col3, col4 = st.columns(4)
+total_placeholder = col1.empty()
+anomaly_placeholder = col2.empty()
+normal_placeholder = col3.empty()
+rate_placeholder = col4.empty()
 
-# Filtre
-st.sidebar.title("🔍 Filtres")
-show_filter = st.sidebar.selectbox(
-    "Afficher",
-    ["Tout", "Anomalies uniquement", "Normal uniquement"]
-)
-# Zone principale
-if uploaded_file is not None:
-    # Lire le fichier
+st.divider()
+
+# Graphiques
+col_left, col_right = st.columns(2)
+with col_left:
+    chart_placeholder = st.empty()
+with col_right:
+    scatter_placeholder = st.empty()
+
+st.divider()
+
+# Tableau temps réel
+st.subheader("📋 Flux réseau en temps réel")
+table_placeholder = st.empty()
+
+# État session
+if 'results' not in st.session_state:
+    st.session_state.results = []
+if 'total' not in st.session_state:
+    st.session_state.total = 0
+if 'anomalies' not in st.session_state:
+    st.session_state.anomalies = 0
+
+def update_display():
+    results = st.session_state.results[-50:]  # 50 derniers
+    total = st.session_state.total
+    anomalies = st.session_state.anomalies
+    normal = total - anomalies
+    rate = (anomalies / total * 100) if total > 0 else 0
+
+    # Métriques
+    total_placeholder.metric("Total Flows", total)
+    anomaly_placeholder.metric("🚨 Anomalies", anomalies, delta=f"{rate:.1f}%", delta_color="inverse")
+    normal_placeholder.metric("✅ Normal", normal)
+    rate_placeholder.metric("Taux Anomalies", f"{rate:.1f}%")
+
+    if results:
+        df_results = pd.DataFrame(results)
+
+        # Camembert
+        fig_pie = px.pie(
+            values=[normal, anomalies],
+            names=['Normal', 'Anomalie'],
+            color_discrete_map={'Normal': '#2ECC71', 'Anomalie': '#E74C3C'},
+            title="Distribution en temps réel"
+        )
+        chart_placeholder.plotly_chart(fig_pie, use_container_width=True)
+
+        # Scatter erreurs
+        fig_scatter = go.Figure()
+        colors = ['#E74C3C' if r['label'] == 'anomalie' else '#2ECC71' for r in results]
+        fig_scatter.add_trace(go.Scatter(
+            y=[r['error'] for r in results],
+            mode='lines+markers',
+            marker=dict(color=colors, size=8),
+            line=dict(color='steelblue', width=1),
+            name='Erreur MSE'
+        ))
+        fig_scatter.add_hline(
+            y=results[0]['threshold'] if results else 0.149,
+            line_dash="dash",
+            line_color="red",
+            annotation_text="Seuil"
+        )
+        fig_scatter.update_layout(title="Erreurs de Reconstruction Live")
+        scatter_placeholder.plotly_chart(fig_scatter, use_container_width=True)
+
+        # Tableau
+        df_display = pd.DataFrame(results[-20:])
+        df_display['status'] = df_display['label'].apply(
+            lambda x: '🚨 ANOMALIE' if x == 'anomalie' else '✅ Normal'
+        )
+        df_display['time'] = pd.to_datetime(df_display['timestamp'], unit='s').dt.strftime('%H:%M:%S')
+        table_placeholder.dataframe(
+            df_display[['time', 'status', 'error']].rename(columns={
+                'time': 'Heure',
+                'status': 'Statut',
+                'error': 'Erreur MSE'
+            }),
+            use_container_width=True
+        )
+
+# Mode temps réel
+st.sidebar.divider()
+realtime_mode = st.sidebar.toggle("🔴 Mode Temps Réel", value=False)
+
+if realtime_mode:
+    st.sidebar.success("🔴 LIVE")
+    
+    try:
+        ws = websocket.create_connection(ws_url, timeout=30)
+        st.info("🔴 Connexion WebSocket établie — En attente de trafic réseau...")
+        
+        while realtime_mode:
+            try:
+                result = json.loads(ws.recv())
+                st.session_state.results.append(result)
+                st.session_state.total += 1
+                if result['is_anomaly']:
+                    st.session_state.anomalies += 1
+                
+                update_display()
+                time.sleep(0.1)
+                
+            except Exception as e:
+                st.warning(f"En attente de données... ({e})")
+                time.sleep(1)
+                
+    except Exception as e:
+        st.error(f"Impossible de se connecter au WebSocket : {e}")
+
+elif uploaded_file is not None:
+    # Mode manuel
     df_input = pd.read_csv(uploaded_file)
-    
-    st.subheader(f"📊 Fichier chargé : {uploaded_file.name} ({len(df_input)} connexions)")
-    
-    # Envoyer à l'API
-    with st.spinner("🔍 Analyse en cours..."):
+    with st.spinner("Analyse en cours..."):
         try:
             files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "text/csv")}
             response = requests.post(f"{api_url}/predict", files=files, timeout=60)
             result = response.json()
+            
+            for r in result['results']:
+                r['timestamp'] = time.time()
+                r['is_anomaly'] = r['label'] == 'anomalie'
+                st.session_state.results.append(r)
+                st.session_state.total += 1
+                if r['is_anomaly']:
+                    st.session_state.anomalies += 1
+            
+            update_display()
+            
         except Exception as e:
-            st.error(f"Erreur API : {e}")
-            st.stop()
-    
-    # Métriques principales
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Connexions", result['total_connections'])
-    col2.metric("🚨 Anomalies", result['anomalies_detected'], 
-                delta=f"{result['anomaly_rate']:.1f}%", delta_color="inverse")
-    col3.metric("✅ Normal", result['normal_connections'])
-    col4.metric("Threshold", f"{result['threshold']:.4f}")
-    
-    st.divider()
-    
-    # Graphiques
-    col_left, col_right = st.columns(2)
-    
-    with col_left:
-        # Camembert
-        fig_pie = px.pie(
-            values=[result['normal_connections'], result['anomalies_detected']],
-            names=['Normal', 'Anomalie'],
-            color_discrete_map={'Normal': '#2ECC71', 'Anomalie': '#E74C3C'},
-            title="Distribution Normal vs Anomalie"
-        )
-        st.plotly_chart(fig_pie, use_container_width=True)
-    
-    with col_right:
-        # Erreurs de reconstruction
-        errors = [r['error'] for r in result['results']]
-        labels = [r['label'] for r in result['results']]
-        colors = ['#E74C3C' if l == 'anomalie' else '#2ECC71' for l in labels]
-        
-        fig_scatter = go.Figure()
-        fig_scatter.add_trace(go.Scatter(
-            y=errors,
-            mode='markers',
-            marker=dict(color=colors, size=8),
-            name='Erreur de reconstruction'
-        ))
-        fig_scatter.add_hline(
-            y=result['threshold'],
-            line_dash="dash",
-            line_color="red",
-            annotation_text=f"Seuil = {result['threshold']:.4f}"
-        )
-        fig_scatter.update_layout(title="Erreurs de Reconstruction par Connexion")
-        st.plotly_chart(fig_scatter, use_container_width=True)
-    
-    st.divider()
-    
-    # Tableau des résultats
-    df_results = pd.DataFrame(result['results'])
-    df_results['status'] = df_results['label'].apply(
-        lambda x: '🚨 ANOMALIE' if x == 'anomalie' else '✅ Normal'
-    )
-    
-    # Appliquer le filtre
-    if show_filter == "Anomalies uniquement":
-        df_results = df_results[df_results['label'] == 'anomalie']
-    elif show_filter == "Normal uniquement":
-        df_results = df_results[df_results['label'] == 'normal']
-    
-    st.subheader(f"📋 Résultats détaillés ({len(df_results)} connexions)")
-    st.dataframe(
-        df_results[['row', 'status', 'error']].rename(columns={
-            'row': 'Connexion',
-            'status': 'Statut',
-            'error': 'Erreur MSE'
-        }),
-        use_container_width=True
-    )
-    
-    # Bouton téléchargement
-    csv_download = df_results.to_csv(index=False)
-    st.download_button(
-        label="⬇️ Télécharger les résultats CSV",
-        data=csv_download,
-        file_name="resultats_anomalies.csv",
-        mime="text/csv"
-    )
-
+            st.error(f"Erreur : {e}")
 else:
-    # Page d'accueil
-    st.info("👈 Upload un fichier CSV dans la sidebar pour commencer l'analyse !")
-    
+    st.info("👈 Active le Mode Temps Réel ou upload un CSV pour commencer !")
     col1, col2, col3 = st.columns(3)
     col1.markdown("### 🧠 Modèle\nAutoencoder PyTorch\n12→8→4→8→12")
     col2.markdown("### 📊 Dataset\nCESNET-TimeSeries24\n952 697 connexions")

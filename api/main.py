@@ -1,3 +1,11 @@
+from fastapi import WebSocket, WebSocketDisconnect
+import asyncio
+import redis as redis_client
+import json
+import torch
+import torch.nn as nn
+import joblib
+import numpy as np
 from fastapi import FastAPI
 from fastapi import FastAPI, UploadFile, File, HTTPException
 import pandas as pd
@@ -5,7 +13,32 @@ import sys
 from pathlib import Path
 import json
 import io
+import os
 
+# Connexion Redis
+
+redis_host = os.getenv('REDIS_HOST', 'localhost')
+redis_conn = redis_client.Redis(host=redis_host, port=6379, decode_responses=True)
+# Autoencoder (même architecture)
+class Autoencoder(nn.Module):
+    def __init__(self):
+        super(Autoencoder, self).__init__()
+        self.encoder = nn.Sequential(nn.Linear(12, 8), nn.ReLU(), nn.Linear(8, 4), nn.ReLU())
+        self.decoder = nn.Sequential(nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 12))
+    def forward(self, x):
+        return self.decoder(self.encoder(x))
+
+# Charger modèle au démarrage
+autoencoder = Autoencoder()
+autoencoder.load_state_dict(torch.load('models/autoencoder.pth', map_location='cpu'))
+autoencoder.eval()
+scaler_rt = joblib.load('models/scaler.pkl')
+
+with open('models/config.json', 'r') as f:
+    config_rt = json.load(f)
+threshold_rt = config_rt['threshold']
+features_rt = config_rt['features']
+skewed_rt = config_rt['skewed_features']
 sys.path.append(str(Path(__file__).parent.parent))
 from utils.predictor import predict
 
@@ -88,3 +121,52 @@ async def predict_anomalies(file: UploadFile = File(...)):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+@app.websocket("/ws/realtime")
+async def websocket_realtime(websocket: WebSocket):
+    await websocket.accept()
+    print("WebSocket connecté !")
+    
+    try:
+        while True:
+            # Lire les flows depuis Redis
+            flow_data = redis_conn.rpop('network_flows')
+            
+            if flow_data:
+                data = json.loads(flow_data)
+                
+                # Prétraitement
+                import pandas as pd
+                df = pd.DataFrame([data])
+                
+                # Garder seulement les features
+                available = [f for f in features_rt if f in df.columns]
+                if len(available) == 12:
+                    df_proc = df[features_rt].copy().astype(float)
+                    for col in skewed_rt:
+                        if col in df_proc.columns:
+                            df_proc[col] = np.log1p(df_proc[col])
+                    
+                    X = scaler_rt.transform(df_proc.values)
+                    X_tensor = torch.FloatTensor(X)
+                    
+                    with torch.no_grad():
+                        X_pred = autoencoder(X_tensor)
+                        error = torch.mean((X_tensor - X_pred) ** 2).item()
+                    
+                    label = "anomalie" if error > threshold_rt else "normal"
+                    
+                    # Envoyer résultat via WebSocket
+                    result = {
+                        "timestamp": data.get('timestamp', 0),
+                        "label": label,
+                        "error": round(error, 6),
+                        "threshold": threshold_rt,
+                        "is_anomaly": label == "anomalie"
+                    }
+                    
+                    await websocket.send_json(result)
+            
+            await asyncio.sleep(0.1)
+            
+    except WebSocketDisconnect:
+        print("WebSocket déconnecté")
