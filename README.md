@@ -28,7 +28,7 @@ Traditional firewalls only block **known threats**. This system detects **any an
 -  **Near Real-Time Detection** — Anomalies detected in < 30 seconds
 -  **Live Dashboard** — WebSocket-powered real-time visualization
 -  **Production Ready** — Fully containerized with Docker
--  **AUC-ROC: 0.96** — Outperforms Isolation Forest baseline (0.86)
+
 
 ---
 
@@ -74,7 +74,7 @@ Virtual Network Lab (Vagrant + VirtualBox)
 
 | Metric | Autoencoder | Isolation Forest |
 |--------|-------------|-----------------|
-| **AUC-ROC** | **0.96** | 0.86 |
+
 | Training Time | ~6 min | 5.6 sec |
 | Anomaly Rate (P95) | 5.0% | 1.8% |
 | Model Correlation | 0.477 | 0.477 |
