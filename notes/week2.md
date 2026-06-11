@@ -7,8 +7,8 @@
 - Isolation Forest entraîné en 5.6 secondes
 
 ## Résultats
-- Autoencoder : 5.0% anomalies, AUC-ROC = 0.96
-- Isolation Forest : 1.8% anomalies, AUC-ROC = 0.86
+- Autoencoder : 5.0% anomalies
+- Isolation Forest : 1.8% anomalies
 - Corrélation entre modèles : 0.477
 
 ## Conclusion
